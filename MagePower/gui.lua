@@ -1,0 +1,678 @@
+local LSM = LibStub("LibSharedMedia-3.0")
+
+function MagePower:UICreate()
+    local header = CreateFrame("Frame", nil, UIParent, "BackdropTemplate")
+    header:ClearAllPoints()
+    header:SetPoint(
+        self.optionsDb.profile.gui.position.point,
+        self.optionsDb.profile.gui.position.x,
+        self.optionsDb.profile.gui.position.y
+    )
+    header:SetSize(85, 15)
+    header:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8X8" })
+    header:SetBackdrop({
+        bgFile = "Interface\\Buttons\\WHITE8X8",
+        edgeFile = "Interface\\Buttons\\WHITE8X8",
+        tile = true,
+        tileEdge = true,
+        tileSize = 8,
+        edgeSize = 1,
+        insets = { left = 1, right = 1, top = 1, bottom = 1 },
+    })
+    header:SetBackdropColor(0.09, 0.09, 0.09, 0.90)
+    header:SetBackdropBorderColor(0.0, 0.0, 0.0, 1.0)
+    header:SetMovable(true)
+    header:EnableMouse(true)
+    header:RegisterForDrag("LeftButton")
+    header:SetScript("OnDragStart", header.StartMoving)
+    header:SetScript("OnDragStop", function(self)
+        self:StopMovingOrSizing()
+        local point, _, _, x, y = self:GetPoint()
+        MagePower.optionsDb.profile.gui.position = { point = point, x = x, y = y }
+        MagePower:NotifyOptionChanged()
+    end)
+
+    if not self.optionsDb.profile.showAnchor then
+        header:Hide()
+    end
+
+    local headerText = header:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    headerText:SetPoint("CENTER", header)
+    headerText:SetJustifyH("CENTER")
+    headerText:SetJustifyV("MIDDLE")
+    headerText:SetText(MagePower.name)
+    header.headerText = headerText
+
+    local mainFrame = CreateFrame("Frame", "MagePowerMainFrame", UIParent, "BackdropTemplate")
+    mainFrame.header = header
+    mainFrame:SetPoint("BOTTOM", header, "TOP", 0, 1)
+    mainFrame:SetSize(100, 100)
+
+    self.UIMainFrame = mainFrame
+    mainFrame.groups = {}
+
+    local numMembersPerParty = MAX_PARTY_MEMBERS + 1
+    local numParties = MAX_RAID_MEMBERS / numMembersPerParty
+    for i = 1, numParties do
+        if i == 1 then
+            mainFrame["group" .. i] = self:UICreateGroupButton(i, mainFrame, "BOTTOM", mainFrame, "BOTTOM")
+        else
+            mainFrame["group" .. i] = self:UICreateGroupButton(
+                i, mainFrame, "BOTTOM", mainFrame["group" .. (i - 1)], "TOP"
+            )
+        end
+
+        table.insert(mainFrame.groups, mainFrame["group" .. i])
+    end
+
+    self:UIUpdateStyle()
+end
+
+function MagePower:UICreateGroupButton(group, parent, point, relativeTo, relativePoint)
+    local frame = nil
+
+    frame = CreateFrame(
+        "Button", nil, parent,
+        "BackdropTemplate, SecureHandlerShowHideTemplate, SecureHandlerEnterLeaveTemplate, SecureHandlerStateTemplate, SecureActionButtonTemplate"
+    )
+    frame.group = group
+
+    frame:SetPoint(point, relativeTo, relativePoint)
+    frame:SetSize(115, 34)
+    frame:SetBackdropColor(unpack(MagePower.optionsDb.profile.colors.buffStateBad))
+    frame:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+    frame:EnableMouseWheel(true)
+    frame:SetAttribute("type", "macro")
+    frame:SetScript("PreClick", function(self, button, down)
+        MagePower:UIGroupPreClick(self)
+    end)
+    frame:Hide()
+
+    local groupText = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    frame.groupText = groupText
+    groupText:SetPoint("BOTTOM", frame, "BOTTOM", 0, 0)
+    groupText:SetText(group)
+
+    local markIcon = CreateFrame("Frame", nil, frame)
+    frame.markIcon = markIcon
+    markIcon:SetPoint("TOPLEFT", 4, -4)
+    markIcon:SetSize(24, 24)
+    markIcon.tex = markIcon:CreateTexture(nil, "OVERLAY")
+    markIcon.tex:SetAllPoints()
+    markIcon.tex:SetTexture("Interface\\Icons\\Spell_holy_magicalsentry")
+
+    local markTimer = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    frame.markTimer = markTimer
+    markTimer:SetPoint("RIGHT", -8, 0)
+    markTimer:SetJustifyH("RIGHT")
+    markTimer:SetText("60:00")
+
+    local markMissing = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    frame.markMissing = markMissing
+    markMissing:SetPoint("LEFT", markIcon, "RIGHT", 3, 0)
+    markMissing:SetText("2")
+    markMissing:SetTextColor(1, 0.79, 0.30)
+
+    frame.player1 = self:UICreatePlayerButton(group, 1, "player1", frame, "BOTTOMRIGHT", frame, "BOTTOMLEFT")
+    frame.player2 = self:UICreatePlayerButton(group, 2, "player2", frame, "BOTTOM", frame.player1, "TOP")
+    frame.player3 = self:UICreatePlayerButton(group, 3, "player3", frame, "BOTTOM", frame.player2, "TOP")
+    frame.player4 = self:UICreatePlayerButton(group, 4, "player4", frame, "BOTTOM", frame.player3, "TOP")
+    frame.player5 = self:UICreatePlayerButton(group, 5, "player5", frame, "BOTTOM", frame.player4, "TOP")
+    frame.players = { frame.player1, frame.player2, frame.player3, frame.player4, frame.player5 }
+
+    frame:Execute("players = table.new()")
+    for _, player in pairs(frame.players) do
+        frame:SetFrameRef("player", player)
+        frame:Execute([[
+            table.insert(players, self:GetFrameRef("player"))
+        ]])
+    end
+
+    frame:SetAttribute("_onenter", [[
+        for _, player in pairs(players) do
+            if player:GetAttribute("Active") then
+                player:Show()
+                player:RegisterAutoHide(0.05)
+                player:AddToAutoHide(self)
+                for _, player2 in pairs(players) do
+                    if player ~= player2 and player2:GetAttribute("Active") then
+                        player:AddToAutoHide(player2)
+                    end
+                end
+            end
+        end
+    ]])
+
+    return frame
+end
+
+function MagePower:UICreatePlayerButton(group, memberIndex, name, parent, point, relativeTo, relativePoint)
+    local frame = CreateFrame(
+        "Button", nil, parent,
+        "BackdropTemplate, SecureActionButtonTemplate"
+    )
+    frame.group = group
+    frame.memberIndex = memberIndex
+    frame:SetPoint(point, relativeTo, relativePoint)
+    frame:SetSize(115, 34)
+    frame:SetBackdropColor(unpack(MagePower.optionsDb.profile.colors.buffStateBad))
+    frame:SetFrameStrata("TOOLTIP")
+    frame:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+    frame:EnableMouseWheel(true)
+    frame:SetAttribute("type", "macro")
+    frame:SetScript("PreClick", function(self, button, down)
+        MagePower:UIPlayerPreClick(self)
+    end)
+    frame:Hide()
+
+    local markIcon = CreateFrame("Frame", nil, frame)
+    frame.markIcon = markIcon
+    markIcon:SetPoint("TOPLEFT", 4, -4)
+    markIcon:SetSize(12, 12)
+    markIcon.tex = markIcon:CreateTexture(nil, "OVERLAY")
+    markIcon.tex:SetAllPoints()
+    markIcon.tex:SetTexture("Interface\\Icons\\Spell_holy_magicalsentry")
+
+    local markTimer = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    frame.markTimer = markTimer
+    markTimer:SetPoint("LEFT", markIcon, "RIGHT", 3, 0)
+    markTimer:SetJustifyH("LEFT")
+    markTimer:SetText("60:00")
+
+    local nameText = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    frame.nameText = nameText
+    nameText:SetPoint("BOTTOMRIGHT", -5, 5)
+    nameText:SetJustifyH("RIGHT")
+    nameText:SetText(name)
+
+    local rangeText = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    frame.rangeText = rangeText
+    rangeText:SetPoint("TOPRIGHT", -5, -5)
+    rangeText:SetJustifyH("RIGHT")
+    rangeText:SetText("R")
+
+    local statusText = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    frame.statusText = statusText
+    statusText:SetPoint("RIGHT", rangeText, "LEFT", -2, 0)
+    statusText:SetJustifyH("RIGHT")
+    statusText:SetText("D")
+    statusText:SetTextColor(unpack(MagePower.optionsDb.profile.colors.unitStatus))
+
+    local roleIcon = CreateFrame("Frame", nil, frame)
+    frame.roleIcon = roleIcon
+    roleIcon:SetPoint("RIGHT", statusText, "LEFT", 0, 1)
+    roleIcon:SetSize(11, 11)
+    roleIcon.tex = roleIcon:CreateTexture(nil, "OVERLAY")
+    roleIcon.tex:SetAllPoints()
+    roleIcon.tex:SetTexture("Interface\\Groupframe\\UI-Group-MainTankIcon")
+
+    return frame
+end
+
+function MagePower:UIRosterUpdate()
+    if InCombatLockdown() then return end
+
+    self:UILayoutReset()
+    self:UIUpdateAllGroups(true)
+end
+
+function MagePower:UIGetGroupFrame(group)
+    return self.UIMainFrame["group" .. group]
+end
+
+function MagePower:UIGetPlayerFrame(group, memberIndex)
+    if type(group) == "number" then
+        local frame = self.UIMainFrame["group" .. group]
+        if frame then
+            return frame["player" .. memberIndex]
+        end
+
+        return nil
+    end
+
+    return group["player" .. memberIndex]
+end
+
+function MagePower:UILayoutReset()
+    if InCombatLockdown() then return end
+
+    local numMembersPerParty = MAX_PARTY_MEMBERS + 1
+    local numParties = MAX_RAID_MEMBERS / numMembersPerParty
+
+    for group = 1, numParties do
+        local frame = self:UIGetGroupFrame(group)
+        if frame then
+            frame:Hide()
+            for i = 1, numMembersPerParty do
+                local playerFrame = self:UIGetPlayerFrame(frame, i)
+                if playerFrame then
+                    playerFrame:SetAttribute("Active", false)
+                end
+            end
+        end
+    end
+end
+
+function MagePower:UIUpdateAllGroups(isRosterUpdate)
+    if #self.roster == 0 then return end
+
+    local numMembersPerParty = MAX_PARTY_MEMBERS + 1
+    local numParties = MAX_RAID_MEMBERS / numMembersPerParty
+
+    for group = 1, numParties do
+        self:UIUpdateGroup(group, isRosterUpdate)
+    end
+end
+
+function MagePower:UIUpdateGroup(group, isRosterUpdate)
+    local frame = self.UIMainFrame["group" .. group]
+    if not frame then
+        return
+    end
+
+    if #self.roster == 0 then
+        return
+    end
+
+    local buffInfo = {}
+    for i, v in pairs(MagePower.Constants.Buffs) do
+        buffInfo[i] = {
+            numShouldHaveBuff = 0,
+            numHasBuff = 0,
+            minDuration = 0,
+        }
+    end
+
+    local hasAnyGroupMembers = false
+    local actualGroup = group
+    for rosterIndex, player in pairs(self.roster) do
+        if player and player.uiGroupIndex == group then
+            hasAnyGroupMembers = true
+            actualGroup = player.group
+            self:UIUpdatePlayer(player, isRosterUpdate)
+            for buffIndex, _ in pairs(MagePower.Constants.Buffs) do
+                local buff = player.buffs[buffIndex]
+
+                local shouldTrackBuff = true
+
+                -- Ignore players that are dead, offline or not in render range during combat
+                if InCombatLockdown() and (player.isDead or not player.online or not player.isVisible) then
+                    shouldTrackBuff = false
+                end
+
+                if shouldTrackBuff and buffIndex ~= MAGEPOWER_BUFFINDEX_AB then
+                    buffInfo[buffIndex].numShouldHaveBuff = buffInfo[buffIndex].numShouldHaveBuff + 1
+                end
+
+                if shouldTrackBuff and buff then
+                    -- Track gift as mark
+                    if buffIndex == MAGEPOWER_BUFFINDEX_AB then
+                        buffIndex = MAGEPOWER_BUFFINDEX_AI
+                    end
+                    buffInfo[buffIndex].numHasBuff = buffInfo[buffIndex].numHasBuff + 1
+
+                    local duration = self.Utils:GetBuffDurationLeft(buff)
+                    if buffInfo[buffIndex].minDuration == 0 or (duration > 0 and duration < buffInfo[buffIndex].minDuration) then
+                        buffInfo[buffIndex].minDuration = duration
+                    end
+                end
+            end
+        end
+    end
+
+    if not hasAnyGroupMembers and not InCombatLockdown() then
+        frame:Hide()
+        for _, playerFrame in pairs(frame.players) do
+            playerFrame:SetAttribute("Active", false)
+            playerFrame:Hide()
+        end
+        return
+    end
+
+    if isRosterUpdate and not InCombatLockdown() then
+        frame:Show()
+        frame.groupText:SetText(actualGroup)
+        self:UIGroupPreClick(frame)
+    end
+
+    local numTotalHasBuff = 0
+    local numTotalNeedBuff = 0
+    for _, info in pairs(buffInfo) do
+        numTotalHasBuff = numTotalHasBuff + info.numHasBuff
+        numTotalNeedBuff = numTotalNeedBuff + info.numShouldHaveBuff
+    end
+
+    if numTotalHasBuff >= numTotalNeedBuff then
+        frame:SetBackdropColor(unpack(MagePower.optionsDb.profile.colors.buffStateGood))
+    elseif numTotalHasBuff == 0 then
+        frame:SetBackdropColor(unpack(MagePower.optionsDb.profile.colors.buffStateBad))
+    else
+        frame:SetBackdropColor(unpack(MagePower.optionsDb.profile.colors.buffStateSome))
+    end
+
+    for buffIndex, _ in pairs(MagePower.Constants.Buffs) do
+        local numShouldHaveBuff = buffInfo[buffIndex].numShouldHaveBuff
+        local numHasBuff = buffInfo[buffIndex].numHasBuff
+        local minDuration = buffInfo[buffIndex].minDuration
+
+        if numHasBuff < numShouldHaveBuff then
+            if buffIndex == MAGEPOWER_BUFFINDEX_AI then
+                frame.markMissing:SetText(numShouldHaveBuff - numHasBuff)
+                frame.markMissing:Show()
+            end
+        else
+            if buffIndex == MAGEPOWER_BUFFINDEX_AI then
+                frame.markMissing:Hide()
+            end
+        end
+
+        if numHasBuff > 0 then
+            if buffIndex == MAGEPOWER_BUFFINDEX_AI then
+                if minDuration > 0 then
+                    frame.markTimer:SetText(MagePower.Utils:FormatDuration(minDuration))
+                    frame.markTimer:SetTextColor(
+                        unpack(MagePower.Utils:DurationColor(
+                            minDuration,
+                            MagePower.Constants.BuffDurationThreshold[buffIndex]
+                        ))
+                    )
+                    frame.markTimer:Show()
+                else
+                    frame.markTimer:Hide()
+                end
+            end
+        else
+            if buffIndex == MAGEPOWER_BUFFINDEX_AI then
+                frame.markTimer:Hide()
+            end
+        end
+    end
+
+    if not self.optionsDb.profile.gui.showNumMissing then
+        frame.markMissing:Hide()
+    end
+
+    if self.optionsDb.profile.gui.showGroupNumber then
+        frame.groupText:Show()
+    else
+        frame.groupText:Hide()
+    end
+end
+
+function MagePower:UIUpdatePlayer(player, isRosterUpdate)
+    local frame = self:UIGetPlayerFrame(player.uiGroupIndex, player.uiMemberIndex)
+    if not frame then
+        return
+    end
+
+    if isRosterUpdate and not InCombatLockdown() then
+        frame:SetAttribute("Active", true)
+        -- If the member menu is open then show the new member immediately
+        local players = frame:GetParent()["players"]
+        if players then
+            for _, v in pairs(players) do
+                if v:IsShown() then
+                    frame:Show()
+                    break
+                end
+            end
+        end
+        MagePower:UIPlayerPreClick(frame)
+    end
+
+    local name = MagePower.Utils:ShortenPlayerName(player.name)
+    local colorHex = select(4, GetClassColor(string.upper(player.class)))
+    frame.nameText:SetText("|c" .. colorHex .. name .. "|r")
+
+    if player.isInRange then
+        frame.rangeText:SetTextColor(unpack(MagePower.optionsDb.profile.colors.unitInRange))
+    else
+        if player.isVisible then
+            frame.rangeText:SetTextColor(unpack(MagePower.optionsDb.profile.colors.unitVisible))
+        else
+            frame.rangeText:SetTextColor(unpack(MagePower.optionsDb.profile.colors.unitOutOfRange))
+        end
+    end
+
+    frame.statusText:SetTextColor(unpack(MagePower.optionsDb.profile.colors.unitStatus))
+    if player.isDead then
+        frame.statusText:SetText("D")
+        frame.statusText:Show()
+    elseif not player.online then
+        frame.statusText:SetText("OFF")
+        frame.statusText:Show()
+    else
+        frame.statusText:Hide()
+    end
+
+    if player.role == "MAINTANK" or player.role == "TANK" then
+        frame.roleIcon:Show()
+    else
+        frame.roleIcon:Hide()
+    end
+
+    local markBuff = player.buffs[MAGEPOWER_BUFFINDEX_AI]
+    local giftBuff = player.buffs[MAGEPOWER_BUFFINDEX_AB]
+
+    if markBuff or giftBuff then
+        frame:SetBackdropColor(unpack(MagePower.optionsDb.profile.colors.buffStateGood))
+    elseif markBuff or giftBuff then
+        frame:SetBackdropColor(unpack(MagePower.optionsDb.profile.colors.buffStateSome))
+    else
+        frame:SetBackdropColor(unpack(MagePower.optionsDb.profile.colors.buffStateBad))
+    end
+
+    if markBuff or giftBuff then
+        local buff
+        local buffIndex
+        if markBuff then
+            buff = markBuff
+            buffIndex = MAGEPOWER_BUFFINDEX_AI
+        else
+            buff = giftBuff
+            buffIndex = MAGEPOWER_BUFFINDEX_AB
+        end
+
+        local duration = self.Utils:GetBuffDurationLeft(buff)
+        frame.markIcon:SetAlpha(1.0)
+        frame.markTimer:SetText(MagePower.Utils:FormatDuration(duration))
+        frame.markTimer:SetTextColor(
+            unpack(MagePower.Utils:DurationColor(
+                duration,
+                MagePower.Constants.BuffDurationThreshold[buffIndex]
+            ))
+        )
+        frame.markTimer:Show()
+    else
+        frame.markIcon:SetAlpha(0.5)
+        frame.markTimer:Hide()
+    end
+end
+
+function MagePower:UIGroupPreClick(frame)
+    if InCombatLockdown() then return end
+
+    frame:UnwrapScript(frame, "OnClick")
+    frame:SetAttribute("spellName1", nil)
+    frame:SetAttribute("spellName2", nil)
+
+    frame:SetAttribute("macrotext1", nil)
+    frame:SetAttribute("macrotext2", nil)
+
+    local players = self:FindPlayersInRosterByUiIndex(frame.group)
+    if #players == 0 then
+        return
+    end
+
+    local names = {}
+    for _, player in pairs(players) do
+        if player.isInRange and player.online and not player.isDead and not player.isAFK then
+            table.insert(names, player.name)
+        end
+    end
+
+    local markSpell = self.Utils:GetMaxRankSpell(MAGEPOWER_BUFFINDEX_AI)
+    local giftSpell = self.Utils:GetMaxRankSpell(MAGEPOWER_BUFFINDEX_AB)
+
+    if markSpell then
+        local name
+        if markSpell.rank then
+            name = markSpell.name .. "(" .. markSpell.rank .. ")"
+        else
+            name = markSpell.name
+        end
+        frame:SetAttribute("spellName1", name)
+    end
+
+    if giftSpell then
+        local name
+        if giftSpell.rank then
+            name = giftSpell.name .. "(" .. giftSpell.rank .. ")"
+        else
+            name = giftSpell.name
+        end
+        frame:SetAttribute("spellName2", name)
+    end
+
+    frame:Execute("names = newtable([=[" .. strjoin("]=],[=[", unpack(names)) .. "]=])\n")
+    frame:WrapScript(frame, "OnClick", [=[
+        local spellName = nil
+        local name = nil
+        local macroName = nil
+
+        if not names or #names == 0 then
+            return
+        end
+
+        if SecureCmdOptionParse("[btn:1]") then
+            spellName = self:GetAttribute("spellName1")
+            local index = self:GetAttribute("index1")
+            if not index or index > #names then
+                index = 1
+            end
+
+            name = names[index]
+            self:SetAttribute("index1", index + 1)
+            macroName = "macrotext1"
+        end
+
+        if SecureCmdOptionParse("[btn:2]") then
+            spellName = self:GetAttribute("spellName2")
+            local index = self:GetAttribute("index2")
+            if not index or index > #names then
+                index = 1
+            end
+
+            name = names[index]
+            self:SetAttribute("index2", index + 1)
+            macroName = "macrotext2"
+        end
+
+        if name and SecureCmdOptionParse("[@" .. name .. ",help,nodead]") then
+            local macro = string.format("/cast [@%s,help,nodead] %s", name, spellName)
+            self:SetAttribute(macroName, macro)
+        end
+    ]=])
+end
+
+function MagePower:UIPlayerPreClick(frame)
+    if InCombatLockdown() then return end
+
+    frame:SetAttribute("macrotext1", nil)
+    frame:SetAttribute("macrotext2", nil)
+
+    local player = self:FindPlayerInRosterByUiIndex(frame.group, frame.memberIndex)
+    if not player then
+        return
+    end
+
+    local markSpell = self.Utils:GetMaxRankSpell(MAGEPOWER_BUFFINDEX_AI)
+    local giftSpell = self.Utils:GetMaxRankSpell(MAGEPOWER_BUFFINDEX_AB)
+
+    if markSpell then
+        local macro
+        if markSpell.rank then
+            macro = string.format("/cast [@%s,help,nodead] %s(%s)", player.name, markSpell.name, markSpell.rank)
+        else
+            macro = string.format("/cast [@%s,help,nodead] %s", player.name, markSpell.name)
+        end
+        frame:SetAttribute("macrotext1", macro)
+    end
+
+    if giftSpell then
+        local macro
+        if giftSpell.rank then
+            macro = string.format("/cast [@%s,help,nodead] %s(%s)", player.name, giftSpell.name, giftSpell.rank)
+        else
+            macro = string.format("/cast [@%s,help,nodead] %s", player.name, giftSpell.name)
+        end
+        frame:SetAttribute("macrotext2", macro)
+    end
+end
+
+function MagePower:UIUpdateAnchor()
+    self.UIMainFrame.header:ClearAllPoints()
+    self.UIMainFrame.header:SetPoint(
+        self.optionsDb.profile.gui.position.point,
+        self.optionsDb.profile.gui.position.x,
+        self.optionsDb.profile.gui.position.y
+    )
+
+    if self.optionsDb.profile.showAnchor then
+        self.UIMainFrame.header:Show()
+    else
+        self.UIMainFrame.header:Hide()
+    end
+end
+
+function MagePower:UIUpdateStyle()
+    local function ChangeFont(frame, font)
+        if not frame or not font then
+            return
+        end
+
+        if frame:GetObjectType() == "FontString" then
+            local _, fontSize, fontStyle = frame:GetFont()
+            frame:SetFont(font, fontSize, fontStyle)
+        else
+            for i = 1, frame:GetNumRegions() do
+                local region = select(i, frame:GetRegions())
+                if region and region:GetObjectType() == "FontString" then
+                    local _, fontSize, fontStyle = region:GetFont()
+                    region:SetFont(font, fontSize, fontStyle)
+                end
+            end
+        end
+    end
+    local font = LSM:Fetch("font", self.optionsDb.profile.gui.style.font)
+    local backdrop = {
+        bgFile = LSM:Fetch("statusbar", self.optionsDb.profile.gui.style.background.texture),
+        edgeFile = LSM:Fetch("border", self.optionsDb.profile.gui.style.border.texture),
+        tile = false,
+        tileSize = 16,
+        tileEdge = false,
+        edgeSize = self.optionsDb.profile.gui.style.border.size,
+        insets = { left = 1, right = 1, top = 1, bottom = 1 },
+    }
+
+    if not backdrop.bgFile then
+        backdrop.bgFile = "Interface\\Tooltips\\UI-Tooltip-Background"
+    end
+
+    ChangeFont(self.UIMainFrame.header, font)
+
+    for _, group in pairs(self.UIMainFrame.groups) do
+        group:SetBackdrop(backdrop)
+        group:SetBackdropBorderColor(unpack(self.optionsDb.profile.gui.style.border.color))
+        ChangeFont(group, font)
+
+        for _, player in pairs(group.players) do
+            player:SetBackdrop(backdrop)
+            player:SetBackdropBorderColor(unpack(self.optionsDb.profile.gui.style.border.color))
+            ChangeFont(player, font)
+        end
+    end
+
+
+    self:UIUpdateAllGroups()
+end
